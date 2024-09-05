@@ -1,0 +1,9 @@
+std_msgs/Header header
+float64 send_steering_r1
+float64 send_steering_l1
+float64 send_steering_r2
+float64 send_steering_l2
+float64 send_steering_r3
+float64 send_steering_l3
+float64 send_throttle_r
+float64 send_throttle_l

@@ -1,0 +1,17 @@
+std_msgs/Header header
+float64 read_speed_r1
+float64 read_speed_l1
+float64 read_speed_r2
+float64 read_speed_l2
+float64 read_speed_r3
+float64 read_speed_l3
+float64 read_steering_r1
+float64 read_steering_l1
+float64 read_steering_r2
+float64 read_steering_l2
+float64 read_steering_r3
+float64 read_steering_l3
+float64 read_phone_run
+float64 read_phone_gears
+float64 read_phone_steering
+float64 read_phone_modes
