@@ -2,8 +2,8 @@
 
 An **ROS**-based autonomous driving system for multi-axle vehicles, integrating a complete autonomy stack — **Perception → Localization → Planning → Control → Chassis Execution** — for a three-axle, six-wheel vehicle (front, middle, and rear axles are all steerable).
 ---
-![Autonomous-driving-of-multi-axle-vehicles](./img1.jpg).
-![Autonomous-driving-of-multi-axle-vehicles](./img2.jpg).
+![Autonomous-driving-of-multi-axle-vehicles](./img1.jpg)
+![Autonomous-driving-of-multi-axle-vehicles](./img2.jpg)
 ## System Architecture
 
 ```
