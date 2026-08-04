@@ -224,8 +224,6 @@ The open-source licenses differ across the modules in this repository:
 - **lidarObstac**, **rs_to_velodyne**, etc. are also third-party open-source projects and follow their respective original licenses
 - The license for the **remaining code written in this repository** is left for you to choose and declare (the `license` field in the current `package.xml` files is still a placeholder)
 
-> ⚠️ Before publishing, please review and fill in the `maintainer` and `license` fields of every `package.xml`.
-
 ---
 
 ## Acknowledgements
