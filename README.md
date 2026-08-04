@@ -1,235 +1,238 @@
-# 多轴车辆自动驾驶系统
+# Autonomous Driving System for Multi-Axle Vehicles
 
-Autonomous Driving System for Multi-Axle Vehicles
-
-基于 **ROS** 的三轴多轴车辆自动驾驶系统,集成了 **感知 → 定位 → 规划 → 控制 → 底盘执行** 的完整自动驾驶功能栈,用于三轴六轮车辆(前、中、后三轴均可转向)的自主行驶。
+An **ROS**-based autonomous driving system for multi-axle vehicles, integrating a complete autonomy stack — **Perception → Localization → Planning → Control → Chassis Execution** — for a three-axle, six-wheel vehicle (front, middle, and rear axles are all steerable).
 
 ---
 
-## 系统架构
+## System Architecture
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────┐
-│                                传感器层                                    │
-│   Robosense 激光雷达  ──►  rs_to_velodyne  ──►  ASENSING 组合惯导 (INS)     │
+│                           SENSOR LAYER                                    │
+│   Robosense LiDAR  ──►  rs_to_velodyne  ──►  ASENSING GNSS/INS           │
 └──────────┬──────────────────────────────┬──────────────────┬───────────────┘
            │ /velodyne_points             │                  │ /IMU
            ▼                              ▼                  ▼
    ┌────────────────┐            ┌──────────────┐     ┌──────────────┐
-   │ lidarObstac    │            │  FAST_LIO    │◄────┤  INS 驱动    │
-   │ 障碍物检测与跟踪 │            │ 激光-惯性里程计│     └──────────────┘
+   │ lidarObstac    │            │  FAST_LIO    │◄────┤  INS Driver  │
+   │ Obstacle Detect│            │ LiDAR-Intertial│    └──────────────┘
+   │  & Tracking    │            │  Odometry    │
    └───────┬────────┘            └──────┬───────┘
            │ /detection/.../objects     │ /state_to_control
            ▼                            ▼
    ┌───────────────────────────────────────────────────┐
-   │                  Local_path (Hybrid A*)            │
-   │     局部栅格地图 + 全局路径 + 车辆状态 ──► 局部路径    │
+   │            Local_path (Hybrid A*)                  │
+   │  local costmap + global path + vehicle state       │
+   │                ──► local path                     │
    └───────────────────────────┬───────────────────────┘
                                │ /local_path
                                ▼
    ┌───────────────────────────────────────────────────┐
-   │          PurePursuit_control (纯跟踪控制)           │
-   │   预瞄模型 + Pure Pursuit + 三轴阿克曼转向分配        │
+   │         PurePursuit_control (Pure Pursuit)         │
+   │   preview model + pure pursuit + multi-axle        │
+   │             Ackermann steering split               │
    └───────────────────────────┬───────────────────────┘
                                │ /decision/steering_angle
                                ▼
    ┌───────────────────────────────────────────────────┐
-   │                  can_ros (CAN 通信)                 │
-   │              前/中/后轴转角、油门 ──► 底盘执行         │
+   │              can_ros (CAN Communication)           │
+   │   front/middle/rear steering angles, throttle      │
+   │                   ──► chassis                      │
    └───────────────────────────────────────────────────┘
 ```
 
-**数据流:** 雷达点云与惯导数据经 FAST_LIO 融合输出车辆位姿;障碍物检测输出目标列表;二者结合全局路径,由 Hybrid A* 规划出满足车辆运动学约束的局部路径;纯跟踪控制器据此计算前轮转角,并通过三轴阿克曼转向几何分配到三个转向轴,最后经 CAN 总线下发底盘执行。
+**Data flow:** LiDAR point clouds and IMU data are fused by FAST_LIO to output vehicle pose; the obstacle detection module outputs a list of detected objects. Combined with the global path, Hybrid A* plans a local path that satisfies vehicle kinematic constraints. The Pure Pursuit controller then computes the front-axle steering angle, distributes it across the three steering axles via multi-axle Ackermann steering geometry, and finally sends the commands to the chassis over CAN.
 
 ---
 
-## 模块说明
+## Modules
 
-| 模块 | 功能 | 核心算法 / 技术 |
-|------|------|----------------|
-| **FAST_LIO** | 激光-惯性里程计 / 建图 | 迭代扩展卡尔曼滤波 (IEKF) + ikd-Tree 增量建图 |
-| **INS** | ASENSING 组合惯导驱动 | 串口协议解析,输出位置、姿态、质心侧偏角、横摆角速度 |
-| **rs_to_velodyne** | 点云格式转换 | Robosense 点云 → Velodyne 格式 (XYZIRT / XYZI) |
-| **lidarObstac** | 障碍物检测与跟踪 | Patchwork 同心区域地面分割 + 欧几里得聚类 + 包围盒拟合 + 匈牙利匹配 / 卡尔曼滤波跟踪 |
-| **Local_path** | 局部路径规划 | Hybrid A* 搜索 + Reeds-Shepp 曲线解析扩展 |
-| **PurePursuit_control** | 路径跟踪控制 | 预瞄 (Preview) 模型 + Pure Pursuit 纯跟踪 + 三轴阿克曼转向分配 |
-| **can_ros** | CAN 总线通信 | Kvaser CANlib 驱动,发送转角 / 油门指令,读取底盘反馈 |
-| **rviz** | 可视化配置 | 车辆模型、安全区域、局部路径、搜索树显示 |
-
----
-
-## 硬件需求
-
-- **车辆平台:** 三轴六轮车辆,前 / 中 / 后三轴均可转向(三轴阿克曼转向几何)
-- **激光雷达:** Robosense 系列 (RS-16 / RS-32 / RS-Ruby / RS-Helios 等)
-- **组合惯导:** ASENSING 系列(串口连接,默认 `/dev/ttyUSB0`)
-- **CAN 总线:** Kvaser CAN 适配器(依赖 Kvaser CANlib)
+| Module | Function | Core Algorithm / Technology |
+|--------|----------|----------------------------|
+| **FAST_LIO** | LiDAR-inertial odometry / mapping | Iterated Extended Kalman Filter (IEKF) + ikd-Tree incremental mapping |
+| **INS** | ASENSING GNSS/INS driver | Serial protocol parsing; outputs position, attitude, sideslip angle, yaw rate |
+| **rs_to_velodyne** | Point cloud format conversion | Robosense point cloud → Velodyne format (XYZIRT / XYZI) |
+| **lidarObstac** | Obstacle detection & tracking | Patchwork concentric-zone ground segmentation + Euclidean clustering + bounding-box fitting + Hungarian matching / Kalman filter tracking |
+| **Local_path** | Local path planning | Hybrid A* search + Reeds-Shepp analytic expansion |
+| **PurePursuit_control** | Path tracking control | Preview model + Pure Pursuit + multi-axle Ackermann steering split |
+| **can_ros** | CAN bus communication | Kvaser CANlib driver; sends steering angle / throttle, reads chassis feedback |
+| **rviz** | Visualization | Vehicle model, safety region, local path, search tree |
 
 ---
 
-## 软件依赖
+## Hardware Requirements
 
-| 依赖 | 版本要求 | 用途 |
-|------|----------|------|
-| Ubuntu | 16.04 / 18.04 | 系统 |
-| ROS | Melodic / Noetic | 通信框架 |
-| PCL | >= 1.8 | 点云处理 |
-| Eigen | >= 3.3.4 | 矩阵运算 |
-| autoware_msgs | - | `DetectedObjectArray` 等消息类型 |
-| rslidar_sdk | - | Robosense 雷达驱动 |
-| livox_ros_driver | - | FAST_LIO 依赖(需先 source) |
-| Kvaser CANlib | - | CAN 通信 |
+- **Vehicle platform:** three-axle, six-wheel vehicle; front / middle / rear axles all steerable (multi-axle Ackermann steering geometry)
+- **LiDAR:** Robosense series (RS-16 / RS-32 / RS-Ruby / RS-Helios, etc.)
+- **GNSS/INS:** ASENSING series (serial connection, default `/dev/ttyUSB0`)
+- **CAN bus:** Kvaser CAN adapter (requires Kvaser CANlib)
 
 ---
 
-## 快速开始
+## Software Dependencies
 
-### 1. 编译
+| Dependency | Version | Purpose |
+|------------|---------|---------|
+| Ubuntu | 16.04 / 18.04 | Operating system |
+| ROS | Melodic / Noetic | Communication framework |
+| PCL | >= 1.8 | Point cloud processing |
+| Eigen | >= 3.3.4 | Linear algebra |
+| autoware_msgs | - | Message types such as `DetectedObjectArray` |
+| rslidar_sdk | - | Robosense LiDAR driver |
+| livox_ros_driver | - | FAST_LIO dependency (must be sourced first) |
+| Kvaser CANlib | - | CAN communication |
 
-将本仓库中的各 ROS 包放入 catkin 工作空间后编译:
+---
+
+## Quick Start
+
+### 1. Build
+
+Copy the ROS packages in this repository into a catkin workspace and build:
 
 ```bash
 cd ~/catkin_ws/src
-# 将本仓库的 FAST_LIO-main、INS、Local_path、PurePursuit_control、can_ros、lidarObstac、rs_to_velodyne 复制到此目录
+# Copy FAST_LIO-main, INS, Local_path, PurePursuit_control,
+# can_ros, lidarObstac, rs_to_velodyne from this repo into this directory
 cd ~/catkin_ws
 catkin_make
 source devel/setup.bash
 ```
 
-> FAST_LIO 需要先安装并 source `livox_ros_driver`(即使使用 Velodyne 格式点云),并执行
-> `git submodule update --init` 拉取 ikd-Tree 子模块。
+> FAST_LIO requires installing and sourcing `livox_ros_driver` (even when using Velodyne-format point clouds), and running
+> `git submodule update --init` to fetch the ikd-Tree submodule.
 
-### 2. 运行
+### 2. Run
 
-按以下顺序启动各节点:
+Start the nodes in the following order:
 
 ```bash
-# ① 雷达驱动 + 点云格式转换
+# ① LiDAR driver + point cloud format conversion
 roslaunch rslidar_sdk start.launch
 rosrun rs_to_velodyne rs_to_velodyne XYZIRT XYZIRT
 
-# ② 组合惯导
-roslaunch ins demo.launch    # 确认串口号 /dev/ttyUSB0
+# ② GNSS/INS
+roslaunch ins demo.launch    # make sure the serial port is /dev/ttyUSB0
 
-# ③ 激光-惯性里程计(定位)
+# ③ LiDAR-inertial odometry (localization)
 roslaunch fast_lio mapping_velodyne.launch
 
-# ④ 障碍物检测
+# ④ Obstacle detection
 roslaunch lidar_detection_track lidar_detection_track.launch
 
-# ⑤ 局部路径规划(Hybrid A*)
+# ⑤ Local path planning (Hybrid A*)
 rosrun hybrid_astar hybrid_astar
 
-# ⑥ 纯跟踪控制
+# ⑥ Pure Pursuit control
 rosrun PurePursuit_control PurePursuit_control_node
 
-# ⑦ CAN 底盘通信
+# ⑦ CAN chassis communication
 rosrun can_ros can_all
 ```
 
 ---
 
-## 核心算法说明
+## Core Algorithms
 
-### Hybrid A* 局部路径规划 (`Local_path`)
+### Hybrid A* Local Path Planning (`Local_path`)
 
-在 **位置 + 航向角** 的连续状态空间上搜索,通过车辆运动学模型生成可行节点:
+Searches in the continuous state space of **position + heading angle**, generating kinematically feasible nodes via the vehicle motion model:
 
-- **状态空间搜索:** 以车辆运动学模型 (`DynamicModel`) 扩展节点,转向角、路径段长度均离散化
-- **代价设计:** 转向惩罚 `steering_penalty`、倒车惩罚 `reversing_penalty`、转向变化惩罚 `steering_change_penalty`
-- **Reeds-Shepp 解析扩展:** 接近终点时直接生成满足运动学约束的 RS 曲线,显著加速收敛
-- **碰撞检测:** 射线检测 + 车辆矩形轮廓离散化,可配置搜索树可视化 (`/searched_tree`)
+- **State-space search:** nodes are expanded with a vehicle kinematic model (`DynamicModel`); steering angle and segment length are discretized
+- **Cost design:** steering penalty `steering_penalty`, reversing penalty `reversing_penalty`, steering-change penalty `steering_change_penalty`
+- **Reeds-Shepp analytic expansion:** near the goal, RS curves that satisfy kinematic constraints are generated directly, significantly accelerating convergence
+- **Collision checking:** ray casting + discretized rectangular vehicle footprint; search-tree visualization available (`/searched_tree`)
 
-### 纯跟踪控制 (`PurePursuit_control`)
+### Pure Pursuit Control (`PurePursuit_control`)
 
-基于前视点 (look-ahead point) 的经典路径跟踪算法,前轮转角由下式计算:
+A classic look-ahead-point path tracking algorithm. The front-axle steering angle is computed as:
 
 ```
 δ = atan2(2 · L · e_y, L_d²)
 ```
 
-其中 `L` 为轴距,`L_d` 为前视距离,`e_y` 为横向偏差。控制器同时结合:
+where `L` is the wheelbase, `L_d` is the look-ahead distance, and `e_y` is the lateral error. The controller additionally combines:
 
-- **预瞄模型** (`Preview_error`):根据车速动态计算前视距离,获取理想横摆角速度与理想质心侧偏角
-- **三轴阿克曼转向分配** (`Akm_get_delta`):由前轴转角推导中 / 后轴转角,满足多轴转向几何约束
+- **Preview model** (`Preview_error`): dynamically computes the look-ahead distance from vehicle speed; derives the ideal yaw rate and ideal sideslip angle
+- **Multi-axle Ackermann steering split** (`Akm_get_delta`): derives the middle / rear axle angles from the front-axle angle, satisfying multi-axle steering geometry constraints
 
-### 障碍物检测 (`lidarObstac`)
+### Obstacle Detection (`lidarObstac`)
 
-- **Patchwork 地面分割:** 将点云按同心扇形分区,逐区域拟合地平面并自适应阈值,鲁棒地分离地面与非地面点
-- **欧几里得聚类 + 包围盒:** 对非地面点聚类,生成障碍物包围盒
-- **多目标跟踪:** 匈牙利算法数据关联 + 卡尔曼滤波,输出稳定的目标轨迹
-
----
-
-## ROS 话题接口
-
-| 话题 | 消息类型 | 方向 | 说明 |
-|------|----------|------|------|
-| `/rslidar_points` | `sensor_msgs/PointCloud2` | 输入 | Robosense 原始点云 |
-| `/velodyne_points` | `sensor_msgs/PointCloud2` | 输出 | Velodyne 格式点云 |
-| `/state_to_control` | `fast_lio::Position_state` | 输出 | 定位状态(位置 / 姿态 / 质心侧偏角 / 横摆角速度) |
-| `/detection/lidar_detector/objects` | `autoware_msgs::DetectedObjectArray` | 输出 | 障碍物目标列表 |
-| `/local_path` | `nav_msgs/Path` | 输出 | 局部规划路径 |
-| `/local_map` | `nav_msgs/OccupancyGrid` | 输出 | 局部栅格地图(障碍物投影) |
-| `/global_path` | `nav_msgs/Path` | 输出 | 全局参考路径(由 txt 文件加载) |
-| `/searched_tree` | `visualization_msgs/Marker` | 输出 | Hybrid A* 搜索树可视化 |
-| `/decision/steering_angle` | `can_ros::send_can` | 输出 | 前 / 中 / 后轴转角、油门指令 |
-| `/car_cube` | `visualization_msgs/Marker` | 输出 | 车辆模型可视化 |
-
-> 自定义消息: `fast_lio::Position_state`、`can_ros::send_can` / `can_ros::read_can`。
+- **Patchwork ground segmentation:** divides the point cloud into concentric-zone sectors, fits a ground plane per region with adaptive thresholds, robustly separating ground from non-ground points
+- **Euclidean clustering + bounding box:** clusters non-ground points and generates obstacle bounding boxes
+- **Multi-object tracking:** Hungarian algorithm for data association + Kalman filtering, producing stable object tracks
 
 ---
 
-## 目录结构
+## ROS Topics
+
+| Topic | Message Type | Direction | Description |
+|-------|--------------|-----------|-------------|
+| `/rslidar_points` | `sensor_msgs/PointCloud2` | Input | Raw Robosense point cloud |
+| `/velodyne_points` | `sensor_msgs/PointCloud2` | Output | Velodyne-format point cloud |
+| `/state_to_control` | `fast_lio::Position_state` | Output | Localization state (position / attitude / sideslip / yaw rate) |
+| `/detection/lidar_detector/objects` | `autoware_msgs::DetectedObjectArray` | Output | Detected object list |
+| `/local_path` | `nav_msgs/Path` | Output | Planned local path |
+| `/local_map` | `nav_msgs/OccupancyGrid` | Output | Local costmap (obstacles projected) |
+| `/global_path` | `nav_msgs/Path` | Output | Global reference path (loaded from a txt file) |
+| `/searched_tree` | `visualization_msgs/Marker` | Output | Hybrid A* search-tree visualization |
+| `/decision/steering_angle` | `can_ros::send_can` | Output | Front / middle / rear axle steering angles, throttle |
+| `/car_cube` | `visualization_msgs/Marker` | Output | Vehicle model visualization |
+
+> Custom messages: `fast_lio::Position_state`, `can_ros::send_can` / `can_ros::read_can`.
+
+---
+
+## Repository Structure
 
 ```
 Autonomous-driving-of-multi-axle-vehicles-main
-├── FAST_LIO-main/            # 激光-惯性里程计与建图
-├── INS/                      # ASENSING 组合惯导驱动
-├── Local_path/               # Hybrid A* 局部路径规划
-│   └── src/hybrid_astar/     #   ├── hybrid_astar_searcher(搜索器)
-│                            #   └── rs_path(Reeds-Shepp 曲线)
-├── PurePursuit_control/      # 纯跟踪控制
+├── FAST_LIO-main/            # LiDAR-inertial odometry & mapping
+├── INS/                      # ASENSING GNSS/INS driver
+├── Local_path/               # Hybrid A* local path planning
+│   └── src/hybrid_astar/     #   ├── hybrid_astar_searcher (search algorithm)
+│                             #   └── rs_path (Reeds-Shepp curves)
+├── PurePursuit_control/      # Pure Pursuit control
 │   └── src/PurePursuit_control/
-│                            #   ├── purepursuit_controler(纯跟踪控制器)
-│                            #   └── Preview_error(预瞄模型)
-├── lidarObstac/              # 激光雷达障碍物检测与跟踪
+│                             #   ├── purepursuit_controler (Pure Pursuit controller)
+│                             #   └── Preview_error (preview model)
+├── lidarObstac/              # LiDAR obstacle detection & tracking
 │   └── src/lidarObstacleDetect-main/
-│                            #   ├── ground_detector/patchwork
-│                            #   ├── cluster/euclideanCluster
-│                            #   └── bounding_box
-├── can_ros/                  # CAN 总线通信
-├── rs_to_velodyne/           # Robosense → Velodyne 点云转换
-└── rviz/                     # rviz 可视化配置
+│                             #   ├── ground_detector/patchwork
+│                             #   ├── cluster/euclideanCluster
+│                             #   └── bounding_box
+├── can_ros/                  # CAN bus communication
+├── rs_to_velodyne/           # Robosense → Velodyne point cloud conversion
+└── rviz/                     # rviz visualization config
 ```
 
 ---
 
-## 注意事项
+## Notes
 
-- 局部路径规划与全局路径加载的**文件路径为硬编码**(默认读取 `/home/kim/Documents/.../path/lla_path.txt` 或 `easy_path.txt`),部署时请按实际环境修改 [hybrid_astar_main.cpp](Local_path/src/hybrid_astar/src/hybrid_astar_main.cpp)。
-- 控制节点运行于 **10 Hz** 控制周期,转角指令限幅为 ±20°。
-- 实车运行前请确认 CAN 设备权限与底盘协议定义一致。
-
----
-
-## 许可证
-
-本项目各模块开源协议不尽相同:
-
-- **FAST_LIO** 为第三方开源项目,遵循其原始许可证(见其仓库 [hku-mars/FAST_LIO](https://github.com/hku-mars/FAST_LIO))
-- **lidarObstac**、**rs_to_velodyne** 等亦为第三方开源项目,遵循其各自原始许可证
-- **本仓库其余自有代码**的许可证请自行选择后补充声明(当前 `package.xml` 中 `license` 字段为占位符)
-
-> ⚠️ 发布前请务必核查并填写各 `package.xml` 的 `maintainer` 与 `license` 字段。
+- The local planner **hardcodes the global-path file path** (it reads `/home/kim/Documents/.../path/lla_path.txt` or `easy_path.txt` by default). Adjust it to your environment in [hybrid_astar_main.cpp](Local_path/src/hybrid_astar/src/hybrid_astar_main.cpp) before deployment.
+- The control node runs at **10 Hz**; steering angle commands are clamped to ±20°.
+- Before real-vehicle tests, verify CAN device permissions and that the chassis protocol matches.
 
 ---
 
-## 致谢
+## License
 
-本系统集成了以下优秀开源项目:
+The open-source licenses differ across the modules in this repository:
 
-- [FAST_LIO](https://github.com/hku-mars/FAST_LIO) — 快速激光-惯性里程计
-- [lidarObstacleDetect](https://github.com/ORiN-Group/lidarObstacleDetect) — 激光雷达障碍物检测与跟踪
-- [rs_to_velodyne](https://github.com/HViktorTsoi/rs_to_velodyne) — 点云格式转换工具
-- [ASENSING INS Driver](https://github.com/ASENSING/ASENSING_INS_Driver) — 组合惯导驱动
+- **FAST_LIO** is a third-party open-source project and follows its original license (see [hku-mars/FAST_LIO](https://github.com/hku-mars/FAST_LIO))
+- **lidarObstac**, **rs_to_velodyne**, etc. are also third-party open-source projects and follow their respective original licenses
+- The license for the **remaining code written in this repository** is left for you to choose and declare (the `license` field in the current `package.xml` files is still a placeholder)
+
+> ⚠️ Before publishing, please review and fill in the `maintainer` and `license` fields of every `package.xml`.
+
+---
+
+## Acknowledgements
+
+This system integrates the following excellent open-source projects:
+
+- [FAST_LIO](https://github.com/hku-mars/FAST_LIO) — Fast LiDAR-Inertial Odometry
+- [lidarObstacleDetect](https://github.com/ORiN-Group/lidarObstacleDetect) — LiDAR obstacle detection & tracking
+- [rs_to_velodyne](https://github.com/HViktorTsoi/rs_to_velodyne) — Point cloud format conversion tool
+- [ASENSING INS Driver](https://github.com/ASENSING/ASENSING_INS_Driver) — GNSS/INS driver
